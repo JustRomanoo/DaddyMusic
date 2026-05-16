@@ -1,0 +1,50 @@
+================================================
+🎵 PAPA MUSIC BOT - CHEAT SHEET & COMMANDS 🎵
+================================================
+
+This document contains all the commands you need to run, manage, and use the bot.
+
+------------------------------------------------
+1. DISCORD COMMANDS (Type these in Discord)
+------------------------------------------------
+!m
+   - WHAT IT DOES: Spawns the main Music Control Panel in the chat.
+   - WHEN TO USE: Whenever you want to start a music session, add songs, or see the player UI.
+
+!setdj @RoleName
+   - WHAT IT DOES: An alternative way to set the DJ role (You can also do this via the ⚙️ Settings button on the panel).
+   - WHEN TO USE: When you want to assign a specific role to have Mod/Admin control over the music.
+
+------------------------------------------------
+2. BOT HOSTING COMMANDS (Type these in Terminal/CMD)
+------------------------------------------------
+pm2 start src/index.js --name "PapaMusicBot"
+   - WHAT IT DOES: Starts the bot in the background 24/7.
+   - WHEN TO USE: When you want the bot to stay online even after you close the terminal.
+
+pm2 restart PapaMusicBot
+   - WHAT IT DOES: Restarts the bot.
+   - WHEN TO USE: Use this after I give you new code updates to apply the changes.
+
+pm2 stop PapaMusicBot
+   - WHAT IT DOES: Turns the bot off.
+   - WHEN TO USE: If you want to take the bot offline temporarily.
+
+pm2 log PapaMusicBot
+   - WHAT IT DOES: Shows you the live console output (errors, startup messages).
+   - WHEN TO USE: If the bot isn't working and you need to see what error is happening behind the scenes. Press Ctrl+C to exit the log view.
+
+pm2 startup
+   - WHAT IT DOES: Generates a command to make PM2 launch automatically when your PC restarts.
+   - WHEN TO USE: If you are hosting the bot on your own PC or a VPS and want it to survive computer reboots.
+
+------------------------------------------------
+3. SETUP COMMANDS (Type these in Terminal/CMD)
+------------------------------------------------
+npm install
+   - WHAT IT DOES: Installs all the required code packages (like discord.js, kazagumo).
+   - WHEN TO USE: Only if you add a new plugin (like Spotify) or download the bot to a new computer.
+
+npm start
+   - WHAT IT DOES: Starts the bot normally (will die if you close the terminal).
+   - WHEN TO USE: When you are just testing code quickly and don't need it to run 24/7.

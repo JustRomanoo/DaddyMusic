@@ -1,0 +1,63 @@
+==============================================================
+🤖 SYSTEM CONTEXT FOR AI ASSISTANT (DO NOT DELETE)
+==============================================================
+If you are a new AI assistant joining this chat, read this file carefully. 
+It contains the exact architecture of "Papa Music Bot".
+
+[TECH STACK]
+- Node.js
+- discord.js v14
+- kazagumo (Music wrapper) & shoukaku (Lavalink client)
+- kazagumo-spotify (Spotify API integration)
+- dotenv (Environment variables)
+
+[CORE ARCHITECTURE & BEHAVIOR]
+This is a premium, UI-driven Discord music bot. There are almost no traditional commands. 
+Everything is controlled via a persistent, interactive embed (the "Music Control Panel") spawned by typing `!m`.
+
+Key Features Implemented:
+1. DJ Role System & Session Locking (Managed via a UI Settings Dashboard).
+2. Vote Skip Mode (Active when unlocked; 50% VC vote required for non-DJs).
+3. Live Voice Channel Status updates ("🎵 Playing: Song Name").
+4. Smart Search & Custom Playlist Modal (Spotify & YouTube supported).
+5. Dynamic Embeds (Progress bars, thumbnail matching, active requesters).
+
+[FILE STRUCTURE & RESPONSIBILITIES]
+
+1. src/index.js
+   - Entry point. Logs in the bot, initializes `PlayerManager`, `ConfigManager`, and `SessionManager`.
+   - Handles the `!m` command natively (spawns the panel, saves the message ID to `panels.json` so only 1 panel exists per guild).
+
+2. src/events/interactionCreate.js
+   - The central brain for UI interactions.
+   - Handles Buttons (Play/Pause/Skip/Leave).
+   - Handles Select Menus (Volume slider, Queue jumper, Playlist loader).
+   - Handles Modals (Add custom song, add custom playlist).
+   - Contains the `Vote Skip` logic in the `music_skip` case.
+
+3. src/utils/panelBuilder.js
+   - UI Factory. Only handles visual rendering.
+   - `buildEmbed()`: Creates the main player UI.
+   - `buildComponents()`: Returns the 4 rows of buttons/menus.
+   - `buildSettingsPanel()`: Creates the ephemeral Settings Dashboard (RoleSelectMenu + Lock Toggle).
+
+4. src/utils/playerManager.js
+   - Initializes Kazagumo & Shoukaku.
+   - Listens to Lavalink events (`playerStart`, `queueEmpty`, etc.).
+   - Contains the 10-second `setInterval` that auto-updates the live progress bar on the panel.
+   - Updates the Discord Voice Channel Status text.
+
+5. src/utils/sessionManager.js
+   - Centralized permission rules engine.
+   - `canControl()`: Determines if a user can Pause/Skip (Must be DJ, Admin, Requester, or Solo).
+   - `canManageSettings()`: Determines if user can open Settings/Leave (Must be Admin or have "Mod" role).
+
+6. src/utils/configManager.js
+   - Persistent database manager for server preferences.
+   - Saves `djRoleId` and `isLocked` state to `guildConfigs.json`.
+
+[DEVELOPMENT RULES FOR AI]
+1. Never break the UI-first philosophy. Avoid adding traditional `!` commands.
+2. If modifying interaction permissions, always update `sessionManager.js`.
+3. If adding new buttons, update `panelBuilder.js` and catch the `customId` in `interactionCreate.js`.
+4. Always use `MessageFlags.Ephemeral` instead of `ephemeral: true` to avoid DJS v14 deprecation warnings.

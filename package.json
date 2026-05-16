@@ -1,0 +1,23 @@
+{
+  "name": "papa-music-bot",
+  "version": "1.0.0",
+  "description": "Discord Music Control Panel Bot",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.15.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.22.2",
+    "kazagumo": "^3.0.5",
+    "kazagumo-spotify": "^2.0.2",
+    "shoukaku": "^4.2.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "author": "Antigravity",
+  "license": "MIT"
+}
