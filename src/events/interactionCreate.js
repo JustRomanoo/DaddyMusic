@@ -197,13 +197,14 @@ module.exports = {
 
                 if (isSpotify) {
                     // For Spotify URLs, rely on the Spotify plugin which intercepts search()
-                    result = await this.safeSearch(kazagumo, query, { requester: member, engine: 'youtube' });
+                    result = await this.safeSearch(kazagumo, query, { requester: member });
                     attempts.push({ engine: 'spotify_plugin', tracks: result?.tracks?.length ?? 0, type: result?.type });
 
                     if (!result?.tracks?.length) {
                         console.log(`[Search] Spotify plugin returned empty. Trying manual Spotify API fallback...`);
                         const manual = await this.manualSpotifySearch(query, kazagumo, member);
                         attempts.push({ engine: 'manual_spotify', tracks: manual?.tracks?.length ?? 0, type: manual?.type });
+                        console.log(`[Search] manualSpotifySearch returned:`, JSON.stringify({ tracks: manual?.tracks?.length, type: manual?.type, playlistName: manual?.playlistName }));
                         if (manual?.tracks?.length) result = manual;
                     }
                 } else if (isYoutubeUrl || isUrl) {
@@ -298,9 +299,13 @@ module.exports = {
      * Used as a fallback when the kazagumo-spotify plugin returns empty.
      */
     async manualSpotifySearch(query, kazagumo, requester) {
+        console.log(`[Spotify] manualSpotifySearch called with query: "${query.substring(0, 100)}"`);
         const config = require('../config');
         const { clientId, clientSecret } = config.spotify;
-        if (!clientId || !clientSecret) return null;
+        if (!clientId || !clientSecret) {
+            console.log(`[Spotify] Missing clientId or clientSecret`);
+            return null;
+        }
 
         let token;
         try {
@@ -322,7 +327,7 @@ module.exports = {
         }
 
         // --- SINGLE TRACK ---
-        const trackMatch = query.match(/track\/([A-Za-z0-9]+)/);
+        const trackMatch = query.match(/track[/:]([A-Za-z0-9_-]+)/);
         if (trackMatch) {
             try {
                 const res = await fetch(`https://api.spotify.com/v1/tracks/${trackMatch[1]}`, {
@@ -347,7 +352,7 @@ module.exports = {
         }
 
         // --- PLAYLIST ---
-        const playlistMatch = query.match(/playlist\/([A-Za-z0-9]+)/);
+        const playlistMatch = query.match(/playlist[/:]([A-Za-z0-9_-]+)/);
         if (playlistMatch) {
             try {
                 console.log(`[Spotify] Manual resolve playlist ${playlistMatch[1]}...`);
