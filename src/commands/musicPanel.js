@@ -10,10 +10,9 @@ module.exports = {
         const { channel, guild, client } = message;
 
         // Debounce: prevent duplicate panel from reconnection double-emits
-        const cooldownKey = `${guild.id}-${message.author.id}`;
-        if (panelCooldowns.has(cooldownKey)) return;
-        panelCooldowns.set(cooldownKey, Date.now());
-        setTimeout(() => panelCooldowns.delete(cooldownKey), 2000);
+        if (panelCooldowns.has(guild.id)) return;
+        panelCooldowns.set(guild.id, Date.now());
+        setTimeout(() => panelCooldowns.delete(guild.id), 3000);
 
         // 1. Check if there's an existing panel in this guild and delete it
         if (client.activePanels.has(guild.id)) {
