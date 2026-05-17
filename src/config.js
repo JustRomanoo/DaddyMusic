@@ -77,10 +77,28 @@ module.exports = {
     ],
     nodes: [
         {
-            name: 'Local Node',
+            name: 'Primary (from env)',
             url: lavalinkConfig.url,
-            auth: process.env.LAVALINK_PASS?.trim(),
+            auth: process.env.LAVALINK_PASS?.trim() || 'https://discord.gg/v6sdrD9kPh',
             secure: lavalinkConfig.secure
+        },
+        {
+            name: 'Muzykant v4',
+            url: 'lavalink_v4.muzykant.xyz:443',
+            auth: 'https://discord.gg/v6sdrD9kPh',
+            secure: true
+        },
+        {
+            name: 'AjieDev v4',
+            url: 'lava-v4.ajieblogs.eu.org:443',
+            auth: 'https://dsc.gg/ajidevserver',
+            secure: true
+        },
+        {
+            name: 'Disutils Lavalink 1',
+            url: 'lavalink-1.is-it.pink:443',
+            auth: 'https://disutils.com',
+            secure: true
         }
     ]
 };
