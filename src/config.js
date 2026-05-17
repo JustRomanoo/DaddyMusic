@@ -1,28 +1,58 @@
 require('dotenv').config();
 
-function normalizeLavalinkUrl() {
+function getLavalinkConfig() {
     const rawUrl = process.env.LAVALINK_URL?.trim();
     const host = process.env.LAVALINK_HOST?.trim();
     const port = process.env.LAVALINK_PORT?.trim();
 
+    const hasProtocol = (value) => /^(https?:\/\/|wss?:\/\/)/i.test(value || '');
+    const isSecureProtocol = (value) => /^(https:\/\/|wss:\/\/)/i.test(value || '');
     const stripProtocol = (value) => value?.replace(/^(?:https?:\/\/|wss?:\/\/)/i, '').replace(/\/+$/, '');
 
+    // If LAVALINK_SECURE is explicitly set, use it
+    const explicitSecure = process.env.LAVALINK_SECURE?.trim();
+    if (explicitSecure !== undefined && explicitSecure !== '') {
+        return {
+            url: rawUrl ? stripProtocol(rawUrl) : (host && port ? `${stripProtocol(host)}:${port}` : null),
+            secure: explicitSecure.toLowerCase() === 'true'
+        };
+    }
+
+    // Auto-detect from URL protocol
+    if (rawUrl && hasProtocol(rawUrl)) {
+        return {
+            url: stripProtocol(rawUrl),
+            secure: isSecureProtocol(rawUrl)
+        };
+    }
+
+    if (host && hasProtocol(host)) {
+        return {
+            url: port ? `${stripProtocol(host)}:${port}` : stripProtocol(host),
+            secure: isSecureProtocol(host)
+        };
+    }
+
+    // Default: secure if port is 443, otherwise false
+    const isDefaultSecure = port === '443';
+    if (isDefaultSecure) {
+        console.log('🔒 Port 443 detected, defaulting to secure connection (wss://)');
+    }
+
     if (rawUrl) {
-        return stripProtocol(rawUrl);
+        return { url: stripProtocol(rawUrl), secure: isDefaultSecure };
     }
 
     if (!host || !port) {
-        return null;
+        return { url: null, secure: false };
     }
 
-    const normalizedHost = stripProtocol(host).replace(/\/$/, '');
-    return `${normalizedHost}:${port}`;
+    return { url: `${stripProtocol(host)}:${port}`, secure: isDefaultSecure };
 }
 
-const lavalinkUrl = normalizeLavalinkUrl();
-const lavalinkSecure = String(process.env.LAVALINK_SECURE || '').trim().toLowerCase() === 'true';
+const lavalinkConfig = getLavalinkConfig();
 
-if (!lavalinkUrl) {
+if (!lavalinkConfig.url) {
     console.error('❌ ERROR: Lavalink host/port is not configured correctly. Check LAVALINK_HOST, LAVALINK_PORT, or LAVALINK_URL in your .env.');
 }
 
@@ -48,9 +78,9 @@ module.exports = {
     nodes: [
         {
             name: 'Local Node',
-            url: lavalinkUrl,
+            url: lavalinkConfig.url,
             auth: process.env.LAVALINK_PASS?.trim(),
-            secure: lavalinkSecure
+            secure: lavalinkConfig.secure
         }
     ]
 };

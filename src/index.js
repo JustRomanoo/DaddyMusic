@@ -80,6 +80,16 @@ if (!config.token || config.token === 'YOUR_DISCORD_BOT_TOKEN_HERE') {
     process.exit(1);
 }
 
+// Prevent crashes from unhandled Discord API errors
+client.on('error', (err) => {
+    console.error('⚠️ Discord client error:', err?.message || err);
+});
+
+// Global safety net for unhandled promise rejections
+process.on('unhandledRejection', (reason) => {
+    console.error('⚠️ Unhandled rejection:', reason?.message || reason);
+});
+
 client.login(config.token).catch(err => {
     console.error('❌ ERROR: Failed to login to Discord.');
     console.error(err);

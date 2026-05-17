@@ -4,11 +4,18 @@
 If you are a new AI assistant joining this chat, read this file carefully. 
 It contains the exact architecture of "Papa Music Bot".
 
+[ENVIRONMENT VARIABLES — src/config.js]
+- `LAVALINK_HOST`, `LAVALINK_PORT`, `LAVALINK_PASS`, `LAVALINK_SECURE` (optional), `LAVALINK_URL` (optional)
+- `LAVALINK_SECURE` auto-detected: if port is 443 or URL uses https/wss, defaults to secure.
+- `LAVALINK_URL` can be used instead of HOST+PORT (protocol is detected automatically).
+- `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` — validated at startup.
+- `DISCORD_TOKEN`, `CLIENT_ID`, `PREFIX` (default: `!`).
+
 [TECH STACK]
 - Node.js
 - discord.js v14
-- kazagumo (Music wrapper) & shoukaku (Lavalink client)
-- kazagumo-spotify (Spotify API integration)
+- kazagumo ^3.0.5 (resolved to 3.4.2) — Music wrapper & shoukaku (Lavalink client)
+- kazagumo-spotify ^2.0.2 — Spotify API integration plugin
 - dotenv (Environment variables)
 
 [CORE ARCHITECTURE & BEHAVIOR]
@@ -27,6 +34,7 @@ Key Features Implemented:
 1. src/index.js
    - Entry point. Logs in the bot, initializes `PlayerManager`, `ConfigManager`, and `SessionManager`.
    - Handles the `!m` command natively (spawns the panel, saves the message ID to `panels.json` so only 1 panel exists per guild).
+   - Has `client.on('error')` handler and `process.on('unhandledRejection')` safety net to prevent crashes.
 
 2. src/events/interactionCreate.js
    - The central brain for UI interactions.
@@ -34,6 +42,10 @@ Key Features Implemented:
    - Handles Select Menus (Volume slider, Queue jumper, Playlist loader).
    - Handles Modals (Add custom song, add custom playlist).
    - Contains the `Vote Skip` logic in the `music_skip` case.
+   - **Search flow**: uses `safeSearch()` wrapper that catches errors, logs result type/track count.
+   - **Fallback chain for text queries**: youtube -> youtube_music -> soundcloud.
+   - **Spotify URLs**: handled by the Spotify plugin (intercepts `search()` via method override). Falls back to text search if plugin returns empty.
+   - **YouTube URLs**: passed directly to Lavalink. Falls back to video ID text search if empty.
 
 3. src/utils/panelBuilder.js
    - UI Factory. Only handles visual rendering.
@@ -43,9 +55,13 @@ Key Features Implemented:
 
 4. src/utils/playerManager.js
    - Initializes Kazagumo & Shoukaku.
+   - **Critical config**: `defaultSearchEngine: 'youtube'` (NOT `youtube_music` -- many Lavalink nodes don't support ytmsearch).
+   - **Spotify plugin**: initialized with `playlistPageLimit: 5`, `albumPageLimit: 5`, `searchLimit: 10`, `searchMarket: 'US'`.
+   - **Shoukaku options**: `reconnectTries: 5`, `restTimeout: 30`, `resume: true`.
    - Listens to Lavalink events (`playerStart`, `queueEmpty`, etc.).
    - Contains the 10-second `setInterval` that auto-updates the live progress bar on the panel.
    - Updates the Discord Voice Channel Status text.
+   - Logs `debug` events from Kazagumo (search results, track resolution, errors).
 
 5. src/utils/sessionManager.js
    - Centralized permission rules engine.
@@ -56,8 +72,38 @@ Key Features Implemented:
    - Persistent database manager for server preferences.
    - Saves `djRoleId` and `isLocked` state to `guildConfigs.json`.
 
+[SEARCH & PLAYBACK ARCHITECTURE]
+
+Kazagumo v3.4.2 search() flow:
+- `search(query, options)` -> goes through Spotify plugin first (plugin replaced the method at load time).
+- Spotify plugin: if query matches `open.spotify.com` regex, it:
+  1. First tries Lavalink directly via `this._search(query, options)` (in case lavasrc plugin exists)
+  2. If Lavalink returns empty, calls Spotify API to fetch track/playlist metadata
+  3. Creates `KazagumoTrack` objects with `encoded: ''` (unresolved)
+  4. Returns `SearchResult` with type `'TRACK'` or `'PLAYLIST'`
+- Non-Spotify queries pass through to original `Kazagumo.search()`:
+  - URL queries (`https://...`) -> sent directly to Lavalink's `/loadtracks` endpoint
+  - Text queries -> prefixed with source (e.g., `ytsearch:query`) and sent to Lavalink
+
+Track resolution for Spotify tracks:
+- Spotify tracks have `encoded: ''` and `readyToPlay = false`
+- When `player.play()` is called, `KazagumoTrack.resolve()` searches YouTube for `"Author - Title"`
+- Resolution uses `defaultSearchEngine` (now `youtube` -> `ytsearch:` prefix)
+- The resolved YouTube track replaces the Spotify track data
+
+Key types (from Kazagumo v3.4.2):
+- `KazagumoSearchOptions`: `{ requester, source?, engine?, nodeName? }`
+- `KazagumoSearchResult`: `{ type: 'PLAYLIST'|'TRACK'|'SEARCH', tracks: KazagumoTrack[], playlistName? }`
+- `SearchEngines`: `'youtube' | 'soundcloud' | 'youtube_music'`
+- `SourceIDs`: `{ youtube: 'yt', youtube_music: 'ytm', soundcloud: 'sc' }`
+- Lavalink loadTypes: `'track' | 'playlist' | 'search' | 'empty' | 'error'` (lowercase)
+- Kazagumo maps Lavalink loadTypes to `'TRACK' | 'PLAYLIST' | 'SEARCH'` (uppercase)
+
 [DEVELOPMENT RULES FOR AI]
 1. Never break the UI-first philosophy. Avoid adding traditional `!` commands.
 2. If modifying interaction permissions, always update `sessionManager.js`.
 3. If adding new buttons, update `panelBuilder.js` and catch the `customId` in `interactionCreate.js`.
 4. Always use `MessageFlags.Ephemeral` instead of `ephemeral: true` to avoid DJS v14 deprecation warnings.
+5. If troubleshooting search failures, check: (a) Lavalink node status in logs, (b) `defaultSearchEngine` value, (c) `result.type` and `result.tracks.length` in debug output, (d) whether the Spotify plugin's `triesLeft` counter is exhausted.
+6. If adding a new search path, always use `safeSearch()` wrapper and add fallback attempts with different `engine` values.
+7. The Spotify plugin caches a `triesLeft` counter (starts at 2) that decrements each time Lavalink returns empty for a Spotify URL. It does NOT reset. After 2 empty Lavalink responses, it skips the Lavalink try and uses the Spotify API directly.

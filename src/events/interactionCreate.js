@@ -394,16 +394,24 @@ module.exports = {
     },
 
     async showAddSongModal(interaction) {
-        const modal = new ModalBuilder().setCustomId('modal_add_song').setTitle('Add Song to Queue');
-        const input = new TextInputBuilder().setCustomId('song_input').setLabel('Search or URL').setPlaceholder('Song name, YouTube URL, or Spotify URL...').setStyle(TextInputStyle.Short).setRequired(true);
-        modal.addComponents(new ActionRowBuilder().addComponents(input));
-        await interaction.showModal(modal);
+        try {
+            const modal = new ModalBuilder().setCustomId('modal_add_song').setTitle('Add Song to Queue');
+            const input = new TextInputBuilder().setCustomId('song_input').setLabel('Search or URL').setPlaceholder('Song name, YouTube URL, or Spotify URL...').setStyle(TextInputStyle.Short).setRequired(true);
+            modal.addComponents(new ActionRowBuilder().addComponents(input));
+            await interaction.showModal(modal);
+        } catch (err) {
+            console.error('Failed to show add song modal:', err?.message || err);
+        }
     },
 
     async showCustomPlaylistModal(interaction) {
-        const modal = new ModalBuilder().setCustomId('modal_custom_playlist').setTitle('Load Playlist URL');
-        const input = new TextInputBuilder().setCustomId('playlist_input').setLabel('Playlist URL').setPlaceholder('https://open.spotify.com/playlist/... or YouTube playlist URL').setStyle(TextInputStyle.Short).setRequired(true);
-        modal.addComponents(new ActionRowBuilder().addComponents(input));
-        await interaction.showModal(modal);
+        try {
+            const modal = new ModalBuilder().setCustomId('modal_custom_playlist').setTitle('Load Playlist URL');
+            const input = new TextInputBuilder().setCustomId('playlist_input').setLabel('Playlist URL').setPlaceholder('https://open.spotify.com/playlist/... or YouTube playlist URL').setStyle(TextInputStyle.Short).setRequired(true);
+            modal.addComponents(new ActionRowBuilder().addComponents(input));
+            await interaction.showModal(modal);
+        } catch (err) {
+            console.error('Failed to show custom playlist modal:', err?.message || err);
+        }
     }
 };
