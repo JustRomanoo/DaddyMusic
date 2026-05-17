@@ -10,11 +10,15 @@ class PlayerManager {
         this.client = client;
         this.idleTimeouts = new Map();
         this.kazagumo = new Kazagumo({
-            defaultSearchEngine: 'youtube_music',
+            defaultSearchEngine: 'youtube',
             plugins: [
                 new Spotify({
                     clientId: config.spotify.clientId,
-                    clientSecret: config.spotify.clientSecret
+                    clientSecret: config.spotify.clientSecret,
+                    playlistPageLimit: 5,
+                    albumPageLimit: 5,
+                    searchLimit: 10,
+                    searchMarket: 'US'
                 })
             ],
             send: (guildId, payload) => {
@@ -24,10 +28,10 @@ class PlayerManager {
         }, new Connectors.DiscordJS(client), config.nodes, {
             resume: true,
             resumeTimeout: 30,
-            reconnectTries: 3,
+            reconnectTries: 5,
             reconnectInterval: 5,
             moveOnDisconnect: true,
-            restTimeout: 60,
+            restTimeout: 30,
             voiceConnectionTimeout: 30
         });
 
@@ -74,6 +78,16 @@ class PlayerManager {
                 secure: nodeConfig?.secure,
                 authConfigured: Boolean(nodeConfig?.auth)
             }, error);
+        });
+
+        this.kazagumo.shoukaku.on('disconnect', (name, count) => {
+            console.warn(`⚠️ Lavalink Node "${name}" disconnected. Moved ${count} players.`);
+        });
+
+        this.kazagumo.on('debug', (message) => {
+            if (message.includes('Searched') || message.includes('Resolving') || message.includes('error')) {
+                console.log(`[Kazagumo Debug] ${message}`);
+            }
         });
 
         this.kazagumo.on('playerStart', async (player, track) => {

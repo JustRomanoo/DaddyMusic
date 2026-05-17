@@ -2,6 +2,7 @@ const { Events, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder
 const PanelBuilder = require('../utils/panelBuilder');
 
 const SPOTIFY_URL_REGEX = /(open\.spotify\.com|spotify:|spotify\.link)/i;
+const YOUTUBE_URL_REGEX = /(youtube\.com|youtu\.be)/i;
 const cooldowns = new Collection();
 
 module.exports = {
@@ -152,15 +153,15 @@ module.exports = {
                 if (value === 'playlist_custom_url') {
                     return this.showCustomPlaylistModal(interaction);
                 }
-                
+
                 await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
-                const result = await client.manager.kazagumo.search(value, { requester: member });
+                const result = await this.safeSearch(client.manager.kazagumo, value, { requester: member, engine: 'youtube' });
                 return this.handleSearchResult(interaction, result);
             }
 
             if (interaction.customId === 'search_result_select') {
                 await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
-                const result = await client.manager.kazagumo.search(value, { requester: member });
+                const result = await this.safeSearch(client.manager.kazagumo, value, { requester: member });
                 return this.handleSearchResult(interaction, result);
             }
 
@@ -184,14 +185,79 @@ module.exports = {
                     console.warn('Could not defer modal reply:', err?.message || err);
                 }
 
-                let result = await client.manager.kazagumo.search(query, { requester: member });
-                if (!result.tracks.length && SPOTIFY_URL_REGEX.test(query)) {
-                    console.warn(`Spotify URL fallback search for query: ${query}`);
-                    result = await client.manager.kazagumo.search(query, { requester: member, engine: 'spotify', source: 'spotify' });
+                const kazagumo = client.manager.kazagumo;
+                const isSpotify = SPOTIFY_URL_REGEX.test(query);
+                const isYoutubeUrl = YOUTUBE_URL_REGEX.test(query);
+                const isUrl = /^https?:\/\//.test(query);
+
+                console.log(`[Search] Query: "${query}" | Spotify: ${isSpotify} | YouTube URL: ${isYoutubeUrl} | IsURL: ${isUrl}`);
+
+                let result = null;
+                let attempts = [];
+
+                if (isSpotify) {
+                    // For Spotify URLs, rely on the Spotify plugin which intercepts search()
+                    result = await this.safeSearch(kazagumo, query, { requester: member, engine: 'youtube' });
+                    attempts.push({ engine: 'youtube', tracks: result?.tracks?.length ?? 0, type: result?.type });
+
+                    if (!result?.tracks?.length) {
+                        console.log(`[Search] Spotify URL returned empty via plugin. Trying alternate approach...`);
+                        // Try searching YouTube directly for the Spotify track as a text query fallback
+                        const textQuery = this.extractSpotifySearchQuery(query);
+                        if (textQuery) {
+                            console.log(`[Search] Fallback: searching text "${textQuery}" on youtube`);
+                            const fallback = await this.safeSearch(kazagumo, textQuery, { requester: member, engine: 'youtube' });
+                            attempts.push({ engine: 'youtube_text', tracks: fallback?.tracks?.length ?? 0, type: fallback?.type });
+                            if (fallback?.tracks?.length) result = fallback;
+                        }
+                    }
+                } else if (isYoutubeUrl || isUrl) {
+                    // YouTube or other URL — pass directly to Lavalink
+                    result = await this.safeSearch(kazagumo, query, { requester: member });
+                    attempts.push({ engine: 'url_direct', tracks: result?.tracks?.length ?? 0, type: result?.type });
+
+                    if (!result?.tracks?.length) {
+                        console.log(`[Search] URL search returned empty, trying youtube text search...`);
+                        const textQuery = this.extractYoutubeSearchQuery(query);
+                        if (textQuery) {
+                            const fallback = await this.safeSearch(kazagumo, textQuery, { requester: member, engine: 'youtube' });
+                            attempts.push({ engine: 'youtube_text', tracks: fallback?.tracks?.length ?? 0, type: fallback?.type });
+                            if (fallback?.tracks?.length) result = fallback;
+                        }
+                    }
+                } else {
+                    // Plain text search
+                    result = await this.safeSearch(kazagumo, query, { requester: member, engine: 'youtube' });
+                    attempts.push({ engine: 'youtube', tracks: result?.tracks?.length ?? 0, type: result?.type });
+
+                    if (!result?.tracks?.length) {
+                        // Retry with different engine
+                        console.log(`[Search] youtube engine returned empty, trying youtube_music...`);
+                        const fallback = await this.safeSearch(kazagumo, query, { requester: member, engine: 'youtube_music' });
+                        attempts.push({ engine: 'youtube_music', tracks: fallback?.tracks?.length ?? 0, type: fallback?.type });
+                        if (fallback?.tracks?.length) result = fallback;
+                    }
+
+                    if (!result?.tracks?.length) {
+                        // Retry with soundcloud
+                        console.log(`[Search] youtube failed, trying soundcloud...`);
+                        const fallback = await this.safeSearch(kazagumo, query, { requester: member, engine: 'soundcloud' });
+                        attempts.push({ engine: 'soundcloud', tracks: fallback?.tracks?.length ?? 0, type: fallback?.type });
+                        if (fallback?.tracks?.length) result = fallback;
+                    }
                 }
 
-                if (!result.tracks.length && SPOTIFY_URL_REGEX.test(query)) {
-                    return interaction.editReply('❌ No Spotify tracks were found. This usually means Spotify credentials are missing or invalid in your Render environment. Please verify `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET`, then restart the bot.');
+                // Log all attempts for debugging
+                console.log(`[Search] Attempts summary:`, JSON.stringify(attempts));
+
+                if (!result || !result.tracks || !result.tracks.length) {
+                    const attemptLog = attempts.map(a => `${a.engine}:${a.tracks}`).join(', ');
+                    let message = '❌ No tracks found.';
+                    if (isSpotify) {
+                        message = '❌ Could not find any playable tracks for this Spotify URL. Try searching by song name instead.';
+                    }
+                    console.log(`[Search] All attempts failed. ${attemptLog}`);
+                    return interaction.editReply(message);
                 }
 
                 return this.handleSearchResult(interaction, result);
@@ -206,10 +272,11 @@ module.exports = {
         console.error('Interaction error:', error);
         if (!interaction) return;
         try {
+            const msg = '❌ Something went wrong while processing that action.';
             if (interaction.replied || interaction.deferred) {
-                await interaction.followUp({ content: '❌ Something went wrong while processing that action.', flags: [MessageFlags.Ephemeral] });
+                await interaction.followUp({ content: msg, flags: [MessageFlags.Ephemeral] });
             } else {
-                await interaction.reply({ content: '❌ Something went wrong while processing that action.', flags: [MessageFlags.Ephemeral] });
+                await interaction.reply({ content: msg, flags: [MessageFlags.Ephemeral] });
             }
         } catch (err) {
             console.error('Failed to send error response for interaction:', err);
@@ -217,10 +284,63 @@ module.exports = {
     },
 
     /**
+     * Safely call kazagumo.search() with error logging
+     */
+    async safeSearch(kazagumo, query, options) {
+        try {
+            const result = await kazagumo.search(query, options);
+            console.log(`[Search] Result for "${query.substring(0, 80)}": type=${result?.type}, tracks=${result?.tracks?.length}${result?.playlistName ? `, playlist="${result.playlistName}"` : ''}`);
+            return result;
+        } catch (err) {
+            console.error(`[Search] Error searching "${query.substring(0, 80)}":`, err?.message || err);
+            return null;
+        }
+    },
+
+    /**
+     * Extract a YouTube-search-friendly query from a Spotify URL
+     */
+    extractSpotifySearchQuery(query) {
+        // Try to match "track/ID" pattern and extract info from URL
+        const trackMatch = query.match(/track\/([A-Za-z0-9]+)/);
+        if (trackMatch) {
+            // For Spotify tracks, the best we can do without the API is return a generic query
+            // The Spotify plugin handles actual resolution; this is just a text fallback
+            return null;
+        }
+        const playlistMatch = query.match(/playlist\/([A-Za-z0-9]+)/);
+        if (playlistMatch) {
+            return null; // Playlists can't be resolved via text search
+        }
+        return null;
+    },
+
+    /**
+     * Extract a search query from a YouTube URL
+     */
+    extractYoutubeSearchQuery(query) {
+        try {
+            const url = new URL(query);
+            if (url.hostname.includes('youtube.com')) {
+                const params = new URLSearchParams(url.search);
+                const v = params.get('v');
+                if (v) return v;
+                const list = params.get('list');
+                if (list) return list;
+            }
+        } catch {
+            // Not a valid URL
+        }
+        return null;
+    },
+
+    /**
      * Centralized search result handler (Supports Playlists, Tracks, and Searches)
      */
     async handleSearchResult(interaction, result) {
-        if (!result.tracks.length) return interaction.editReply('❌ No tracks found.');
+        if (!result || !result.tracks || !result.tracks.length) {
+            return interaction.editReply('❌ No tracks found.');
+        }
 
         const { client, guildId, member } = interaction;
 
@@ -229,16 +349,23 @@ module.exports = {
                 await this.playTrack(interaction, track, true);
             }
             await client.manager.updatePanel(guildId);
-            const message = result.type === 'PLAYLIST' 
-                ? `📁 Added playlist: **${result.playlistName}** (${result.tracks.length} tracks)` 
-                : `➕ Added: **${result.tracks[0].title}**`;
+            const message = result.type === 'PLAYLIST'
+                ? `📁 Added playlist: **${result.playlistName || 'Untitled'}** (${result.tracks.length} tracks)`
+                : `➕ Added: **${result.tracks[0].title || 'Unknown'}**`;
             return interaction.editReply(message);
         }
 
-        // Search flow
+        // Search flow (SEARCH type or unknown type)
         const top5 = result.tracks.slice(0, 5);
+        if (!top5.length) {
+            return interaction.editReply('❌ No tracks found.');
+        }
         const menu = new StringSelectMenuBuilder().setCustomId('search_result_select').setPlaceholder('Choose a track...')
-            .addOptions(top5.map(t => ({ label: t.title.substring(0, 100), description: t.author.substring(0, 100), value: t.uri })));
+            .addOptions(top5.map(t => ({
+                label: (t.title || 'Unknown').substring(0, 100),
+                description: (t.author || 'Unknown').substring(0, 100),
+                value: t.uri || t.identifier
+            })));
         return interaction.editReply({ content: `🔍 Search results:`, components: [new ActionRowBuilder().addComponents(menu)] });
     },
 
@@ -268,14 +395,14 @@ module.exports = {
 
     async showAddSongModal(interaction) {
         const modal = new ModalBuilder().setCustomId('modal_add_song').setTitle('Add Song to Queue');
-        const input = new TextInputBuilder().setCustomId('song_input').setLabel('Search or URL').setPlaceholder('Song name...').setStyle(TextInputStyle.Short).setRequired(true);
+        const input = new TextInputBuilder().setCustomId('song_input').setLabel('Search or URL').setPlaceholder('Song name, YouTube URL, or Spotify URL...').setStyle(TextInputStyle.Short).setRequired(true);
         modal.addComponents(new ActionRowBuilder().addComponents(input));
         await interaction.showModal(modal);
     },
 
     async showCustomPlaylistModal(interaction) {
-        const modal = new ModalBuilder().setCustomId('modal_custom_playlist').setTitle('Load Spotify Playlist');
-        const input = new TextInputBuilder().setCustomId('playlist_input').setLabel('Spotify playlist URL').setPlaceholder('https://open.spotify.com/playlist/...').setStyle(TextInputStyle.Short).setRequired(true);
+        const modal = new ModalBuilder().setCustomId('modal_custom_playlist').setTitle('Load Playlist URL');
+        const input = new TextInputBuilder().setCustomId('playlist_input').setLabel('Playlist URL').setPlaceholder('https://open.spotify.com/playlist/... or YouTube playlist URL').setStyle(TextInputStyle.Short).setRequired(true);
         modal.addComponents(new ActionRowBuilder().addComponents(input));
         await interaction.showModal(modal);
     }
