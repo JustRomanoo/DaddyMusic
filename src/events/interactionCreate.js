@@ -201,14 +201,10 @@ module.exports = {
                     attempts.push({ engine: 'spotify_plugin', tracks: result?.tracks?.length ?? 0, type: result?.type });
 
                     if (!result?.tracks?.length) {
-                        console.log(`[Search] Spotify plugin returned empty. Trying direct Spotify API + YouTube fallback...`);
-                        const textQuery = await this.resolveSpotifyUrl(query);
-                        if (textQuery) {
-                            console.log(`[Search] Fallback: searching youtube for "${textQuery}"`);
-                            const fallback = await this.safeSearch(kazagumo, textQuery, { requester: member, engine: 'youtube' });
-                            attempts.push({ engine: 'spotify_api_text', tracks: fallback?.tracks?.length ?? 0, type: fallback?.type });
-                            if (fallback?.tracks?.length) result = fallback;
-                        }
+                        console.log(`[Search] Spotify plugin returned empty. Trying manual Spotify API fallback...`);
+                        const manual = await this.manualSpotifySearch(query, kazagumo, member);
+                        attempts.push({ engine: 'manual_spotify', tracks: manual?.tracks?.length ?? 0, type: manual?.type });
+                        if (manual?.tracks?.length) result = manual;
                     }
                 } else if (isYoutubeUrl || isUrl) {
                     // YouTube or other URL — pass directly to Lavalink
@@ -297,59 +293,144 @@ module.exports = {
     },
 
     /**
-     * Resolve a Spotify URL by calling the Spotify API directly, returning "Artist - Title"
+     * Manual Spotify URL resolver.
+     * Gets a token from Spotify API, fetches track/playlist info, and searches YouTube for each track.
      * Used as a fallback when the kazagumo-spotify plugin returns empty.
      */
-    async resolveSpotifyUrl(query) {
+    async manualSpotifySearch(query, kazagumo, requester) {
         const config = require('../config');
         const { clientId, clientSecret } = config.spotify;
         if (!clientId || !clientSecret) return null;
 
+        let token;
         try {
-            // Get Spotify API token
             const auth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
             const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
                 method: 'POST',
-                headers: {
-                    Authorization: `Basic ${auth}`,
-                    'Content-Type': 'application/x-www-form-urlencoded'
-                },
+                headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: 'grant_type=client_credentials'
             });
             const tokenBody = await tokenRes.json();
-            if (!tokenBody.access_token) return null;
-            const token = `Bearer ${tokenBody.access_token}`;
-
-            // Track URL: https://open.spotify.com/track/{id}
-            const trackMatch = query.match(/track\/([A-Za-z0-9]+)/);
-            if (trackMatch) {
-                const trackRes = await fetch(`https://api.spotify.com/v1/tracks/${trackMatch[1]}`, {
-                    headers: { Authorization: token }
-                });
-                if (!trackRes.ok) return null;
-                const track = await trackRes.json();
-                const artist = track.artists?.[0]?.name;
-                const title = track.name;
-                if (artist && title) {
-                    const textQuery = `${artist} - ${title}`;
-                    console.log(`[Spotify] Resolved track: "${textQuery}"`);
-                    return textQuery;
-                }
+            if (!tokenBody.access_token) {
+                console.error(`[Spotify] Failed to get API token:`, tokenBody);
                 return null;
             }
-
-            // Playlist URL: https://open.spotify.com/playlist/{id}
-            const playlistMatch = query.match(/playlist\/([A-Za-z0-9]+)/);
-            if (playlistMatch) {
-                console.log(`[Spotify] Playlists cannot be resolved via text fallback. Returning null.`);
-                return null; // Can't convert a whole playlist to a single text query
-            }
-
-            return null;
+            token = `Bearer ${tokenBody.access_token}`;
         } catch (err) {
-            console.error(`[Spotify] API fallback error:`, err?.message || err);
+            console.error(`[Spotify] Token request failed:`, err?.message || err);
             return null;
         }
+
+        // --- SINGLE TRACK ---
+        const trackMatch = query.match(/track\/([A-Za-z0-9]+)/);
+        if (trackMatch) {
+            try {
+                const res = await fetch(`https://api.spotify.com/v1/tracks/${trackMatch[1]}`, {
+                    headers: { Authorization: token }
+                });
+                if (!res.ok) return null;
+                const track = await res.json();
+                const artist = track.artists?.[0]?.name;
+                const title = track.name;
+                if (!artist || !title) return null;
+                const searchQuery = `${artist} - ${title}`;
+                console.log(`[Spotify] Manual resolve track -> "${searchQuery}"`);
+                const ytResult = await this.safeSearch(kazagumo, searchQuery, { requester, engine: 'youtube' });
+                if (ytResult?.tracks?.length) {
+                    return { type: 'TRACK', tracks: [ytResult.tracks[0]], playlistName: undefined };
+                }
+                return null;
+            } catch (err) {
+                console.error(`[Spotify] Track resolve error:`, err?.message || err);
+                return null;
+            }
+        }
+
+        // --- PLAYLIST ---
+        const playlistMatch = query.match(/playlist\/([A-Za-z0-9]+)/);
+        if (playlistMatch) {
+            try {
+                console.log(`[Spotify] Manual resolve playlist ${playlistMatch[1]}...`);
+                const playlistId = playlistMatch[1];
+                const playlistName = await this.fetchSpotifyPlaylistName(playlistId, token);
+
+                // Fetch all tracks with pagination (up to 50)
+                const spotifyTracks = await this.fetchSpotifyPlaylistTracks(playlistId, token, 50);
+                if (!spotifyTracks.length) {
+                    console.log(`[Spotify] No playable tracks found in playlist`);
+                    return { type: 'PLAYLIST', tracks: [], playlistName };
+                }
+
+                console.log(`[Spotify] Searching YouTube for ${spotifyTracks.length} tracks...`);
+                const resolvedTracks = [];
+                for (let i = 0; i < spotifyTracks.length; i++) {
+                    const st = spotifyTracks[i];
+                    const searchQuery = `${st.artist} - ${st.title}`;
+                    try {
+                        const ytResult = await kazagumo.search(searchQuery, { requester });
+                        if (ytResult?.tracks?.length) {
+                            resolvedTracks.push(ytResult.tracks[0]);
+                        }
+                    } catch (e) {
+                        // skip failed tracks
+                    }
+                    // Small delay every 5 tracks to avoid rate limiting
+                    if (i % 5 === 4) await new Promise(r => setTimeout(r, 500));
+                }
+
+                console.log(`[Spotify] Resolved ${resolvedTracks.length}/${spotifyTracks.length} tracks for playlist "${playlistName}"`);
+                return { type: 'PLAYLIST', tracks: resolvedTracks, playlistName };
+            } catch (err) {
+                console.error(`[Spotify] Playlist resolve error:`, err?.message || err);
+                return null;
+            }
+        }
+
+        return null;
+    },
+
+    /**
+     * Fetch the name of a Spotify playlist
+     */
+    async fetchSpotifyPlaylistName(playlistId, token) {
+        try {
+            const res = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}?fields=name`, {
+                headers: { Authorization: token }
+            });
+            if (!res.ok) return 'Spotify Playlist';
+            const data = await res.json();
+            return data.name || 'Spotify Playlist';
+        } catch {
+            return 'Spotify Playlist';
+        }
+    },
+
+    /**
+     * Fetch all tracks of a Spotify playlist (with pagination, up to maxTracks)
+     */
+    async fetchSpotifyPlaylistTracks(playlistId, token, maxTracks = 50) {
+        const tracks = [];
+        let url = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?market=US&limit=50`;
+        while (url && tracks.length < maxTracks) {
+            try {
+                const res = await fetch(url, { headers: { Authorization: token } });
+                if (!res.ok) break;
+                const data = await res.json();
+                for (const item of data.items || []) {
+                    if (item?.track) {
+                        tracks.push({
+                            artist: item.track.artists?.[0]?.name || 'Unknown',
+                            title: item.track.name || 'Unknown'
+                        });
+                        if (tracks.length >= maxTracks) break;
+                    }
+                }
+                url = data.next;
+            } catch {
+                break;
+            }
+        }
+        return tracks;
     },
 
     /**
