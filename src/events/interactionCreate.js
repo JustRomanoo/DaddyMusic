@@ -198,16 +198,15 @@ module.exports = {
                 if (isSpotify) {
                     // For Spotify URLs, rely on the Spotify plugin which intercepts search()
                     result = await this.safeSearch(kazagumo, query, { requester: member, engine: 'youtube' });
-                    attempts.push({ engine: 'youtube', tracks: result?.tracks?.length ?? 0, type: result?.type });
+                    attempts.push({ engine: 'spotify_plugin', tracks: result?.tracks?.length ?? 0, type: result?.type });
 
                     if (!result?.tracks?.length) {
-                        console.log(`[Search] Spotify URL returned empty via plugin. Trying alternate approach...`);
-                        // Try searching YouTube directly for the Spotify track as a text query fallback
-                        const textQuery = this.extractSpotifySearchQuery(query);
+                        console.log(`[Search] Spotify plugin returned empty. Trying direct Spotify API + YouTube fallback...`);
+                        const textQuery = await this.resolveSpotifyUrl(query);
                         if (textQuery) {
-                            console.log(`[Search] Fallback: searching text "${textQuery}" on youtube`);
+                            console.log(`[Search] Fallback: searching youtube for "${textQuery}"`);
                             const fallback = await this.safeSearch(kazagumo, textQuery, { requester: member, engine: 'youtube' });
-                            attempts.push({ engine: 'youtube_text', tracks: fallback?.tracks?.length ?? 0, type: fallback?.type });
+                            attempts.push({ engine: 'spotify_api_text', tracks: fallback?.tracks?.length ?? 0, type: fallback?.type });
                             if (fallback?.tracks?.length) result = fallback;
                         }
                     }
@@ -298,21 +297,59 @@ module.exports = {
     },
 
     /**
-     * Extract a YouTube-search-friendly query from a Spotify URL
+     * Resolve a Spotify URL by calling the Spotify API directly, returning "Artist - Title"
+     * Used as a fallback when the kazagumo-spotify plugin returns empty.
      */
-    extractSpotifySearchQuery(query) {
-        // Try to match "track/ID" pattern and extract info from URL
-        const trackMatch = query.match(/track\/([A-Za-z0-9]+)/);
-        if (trackMatch) {
-            // For Spotify tracks, the best we can do without the API is return a generic query
-            // The Spotify plugin handles actual resolution; this is just a text fallback
+    async resolveSpotifyUrl(query) {
+        const config = require('../config');
+        const { clientId, clientSecret } = config.spotify;
+        if (!clientId || !clientSecret) return null;
+
+        try {
+            // Get Spotify API token
+            const auth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+            const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
+                method: 'POST',
+                headers: {
+                    Authorization: `Basic ${auth}`,
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: 'grant_type=client_credentials'
+            });
+            const tokenBody = await tokenRes.json();
+            if (!tokenBody.access_token) return null;
+            const token = `Bearer ${tokenBody.access_token}`;
+
+            // Track URL: https://open.spotify.com/track/{id}
+            const trackMatch = query.match(/track\/([A-Za-z0-9]+)/);
+            if (trackMatch) {
+                const trackRes = await fetch(`https://api.spotify.com/v1/tracks/${trackMatch[1]}`, {
+                    headers: { Authorization: token }
+                });
+                if (!trackRes.ok) return null;
+                const track = await trackRes.json();
+                const artist = track.artists?.[0]?.name;
+                const title = track.name;
+                if (artist && title) {
+                    const textQuery = `${artist} - ${title}`;
+                    console.log(`[Spotify] Resolved track: "${textQuery}"`);
+                    return textQuery;
+                }
+                return null;
+            }
+
+            // Playlist URL: https://open.spotify.com/playlist/{id}
+            const playlistMatch = query.match(/playlist\/([A-Za-z0-9]+)/);
+            if (playlistMatch) {
+                console.log(`[Spotify] Playlists cannot be resolved via text fallback. Returning null.`);
+                return null; // Can't convert a whole playlist to a single text query
+            }
+
+            return null;
+        } catch (err) {
+            console.error(`[Spotify] API fallback error:`, err?.message || err);
             return null;
         }
-        const playlistMatch = query.match(/playlist\/([A-Za-z0-9]+)/);
-        if (playlistMatch) {
-            return null; // Playlists can't be resolved via text search
-        }
-        return null;
     },
 
     /**
