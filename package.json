@@ -11,6 +11,7 @@
     "discord.js": "^14.15.3",
     "dotenv": "^16.4.5",
     "express": "^4.22.2",
+    "https-proxy-agent": "^9.0.0",
     "kazagumo": "^3.0.5",
     "kazagumo-spotify": "^2.0.2",
     "shoukaku": "^4.2.1"

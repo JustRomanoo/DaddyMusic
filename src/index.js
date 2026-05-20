@@ -1,3 +1,22 @@
+const dns = require('dns');
+dns.setDefaultResultOrder('ipv4first');
+
+const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY;
+if (proxyUrl) {
+    const { setGlobalDispatcher, ProxyAgent } = require('undici');
+    setGlobalDispatcher(new ProxyAgent(proxyUrl));
+    const { HttpsProxyAgent } = require('https-proxy-agent');
+    const wsAgent = new HttpsProxyAgent(proxyUrl);
+    const ws = require('ws');
+    const OrigWS = ws.WebSocket;
+    ws.WebSocket = function PatchedWS(url, protocols, opts) {
+        return new OrigWS(url, protocols, { ...opts, agent: wsAgent });
+    };
+    ws.WebSocket.prototype = OrigWS.prototype;
+    ws.WebSocket.CONNECTING = 0; ws.WebSocket.OPEN = 1; ws.WebSocket.CLOSING = 2; ws.WebSocket.CLOSED = 3;
+    console.log(`\u{1F510} Proxy configured: ${proxyUrl}`);
+}
+
 const { Client, GatewayIntentBits } = require('discord.js');
 const express = require('express');
 const config = require('./config');
@@ -13,13 +32,17 @@ app.listen(PORT, () => {
 });
 
 // Initialize Client with necessary Intents
+const discordProxyUrl = process.env.DISCORD_PROXY_URL;
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildVoiceStates
-    ]
+    ],
+    ...(discordProxyUrl && {
+        rest: { api: discordProxyUrl }
+    })
 });
 
 // For tracking panels: guildId -> { channelId, messageId }
