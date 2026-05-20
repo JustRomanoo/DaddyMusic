@@ -32,7 +32,8 @@ app.listen(PORT, () => {
 });
 
 // Initialize Client with necessary Intents
-const discordProxyUrl = process.env.DISCORD_PROXY_URL;
+let discordProxyUrl = process.env.DISCORD_PROXY_URL;
+if (discordProxyUrl && !discordProxyUrl.startsWith('http://') && !discordProxyUrl.startsWith('https://')) discordProxyUrl = 'https://' + discordProxyUrl;
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
